@@ -1,377 +1,335 @@
-const crypto = require('crypto');
-const fs = require('fs').promises;
-const path = require('path');
-const os = require('os');
-const https = require('https');
-const http = require('http');
-
-class LicenseManager {
-    constructor() {
-        this.secretKey = 'photosync-2024-secret-key-v1';
-        this.licenseFile = path.join(os.homedir(), '.photosync-license');
-        this.serverUrl = 'https://droners1.github.io/photosync-server/photosync-status.json';
-        this.serverCheckInterval = 24 * 60 * 60 * 1000; // 24 hours
-        this.serverTimeout = 10000; // 10 seconds
-        this.blacklistFile = path.join(os.homedir(), '.photosync-blacklist');
-    }
-
-    // Generate a license key (for distribution)
-    generateLicenseKey(userInfo = '') {
-        const timestamp = Date.now();
-        const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-        const baseKey = `PSYNC-2024-${random}-${timestamp.toString(36).toUpperCase()}`;
-        
-        // Create HMAC signature (not including userInfo for universal keys)
-        const hmac = crypto.createHmac('sha256', this.secretKey);
-        hmac.update(baseKey);
-        const signature = hmac.digest('hex').substring(0, 8).toUpperCase();
-        
-        return `${baseKey}-${signature}`;
-    }
-
-    // Validate a license key
-    validateLicenseKey(licenseKey, userInfo = '') {
-        try {
-            const parts = licenseKey.split('-');
-            if (parts.length !== 5 || parts[0] !== 'PSYNC' || parts[1] !== '2024') {
-                return false;
-            }
-
-            const baseKey = parts.slice(0, 4).join('-');
-            const providedSignature = parts[4];
-
-            // Verify HMAC signature (not including userInfo for universal keys)
-            const hmac = crypto.createHmac('sha256', this.secretKey);
-            hmac.update(baseKey);
-            const expectedSignature = hmac.digest('hex').substring(0, 8).toUpperCase();
-
-            return providedSignature === expectedSignature;
-        } catch (error) {
-            return false;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photosync Admin Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-    }
 
-    // Fetch server status with timeout
-    async fetchServerStatus() {
-        return new Promise((resolve) => {
-            const protocol = this.serverUrl.startsWith('https:') ? https : http;
-            
-            const request = protocol.get(this.serverUrl, {
-                timeout: this.serverTimeout,
-                headers: {
-                    'User-Agent': 'Photosync/1.0',
-                    'Cache-Control': 'no-cache'
-                }
-            }, (response) => {
-                let data = '';
-                
-                response.on('data', (chunk) => {
-                    data += chunk;
-                });
-                
-                response.on('end', () => {
-                    try {
-                        if (response.statusCode === 200) {
-                            const serverData = JSON.parse(data);
-                            resolve({ success: true, data: serverData });
-                        } else {
-                            resolve({ success: false, error: `Server returned status ${response.statusCode}` });
-                        }
-                    } catch (error) {
-                        resolve({ success: false, error: 'Invalid server response' });
-                    }
-                });
-            });
-            
-            request.on('error', (error) => {
-                resolve({ success: false, error: error.message });
-            });
-            
-            request.on('timeout', () => {
-                request.destroy();
-                resolve({ success: false, error: 'Server request timeout' });
-            });
-            
-            request.setTimeout(this.serverTimeout);
-        });
-    }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
 
-    // Check server blacklist and kill switch
-    async checkServerStatus(licenseKey) {
-        try {
-            const result = await this.fetchServerStatus();
-            
-            if (!result.success) {
-                console.log('Server check failed:', result.error);
-                return { serverReachable: false, allowed: true }; // Fail open for offline usage
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(30, 30, 46, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #4a9eff, #00d4ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #a0a0a0;
+            font-size: 1.1em;
+        }
+
+        .admin-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .admin-section {
+            background: rgba(45, 45, 68, 0.8);
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .admin-section:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .section-title {
+            font-size: 1.4em;
+            margin-bottom: 20px;
+            color: #4a9eff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(45deg, #4a9eff, #00d4ff);
+            border-radius: 2px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #b0b0b0;
+            font-weight: 500;
+        }
+
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px 15px;
+            background: rgba(20, 20, 30, 0.8);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 14px;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #4a9eff;
+            box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(45deg, #4a9eff, #00d4ff);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(74, 158, 255, 0.3);
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, #ff4757, #ff3742);
+        }
+
+        .btn-danger:hover {
+            box-shadow: 0 8px 20px rgba(255, 71, 87, 0.3);
+        }
+
+        .btn-warning {
+            background: linear-gradient(45deg, #ffa502, #ff6348);
+        }
+
+        .btn-warning:hover {
+            box-shadow: 0 8px 20px rgba(255, 165, 2, 0.3);
+        }
+
+        .btn-success {
+            background: linear-gradient(45deg, #2ed573, #1dd1a1);
+        }
+
+        .btn-success:hover {
+            box-shadow: 0 8px 20px rgba(46, 213, 115, 0.3);
+        }
+
+        .output-area {
+            background: rgba(20, 20, 30, 0.8);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+            min-height: 150px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #00ff88;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            margin-top: 15px;
+        }
+
+        .key-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(20, 20, 30, 0.8);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .key-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin-bottom: 10px;
+            background: rgba(45, 45, 68, 0.5);
+            border-radius: 6px;
+            border-left: 4px solid #4a9eff;
+        }
+
+        .key-item.revoked {
+            border-left-color: #ff4757;
+            opacity: 0.7;
+        }
+
+        .key-code {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #00ff88;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background: #2ed573;
+        }
+
+        .status-offline {
+            background: #ff4757;
+        }
+
+        .status-maintenance {
+            background: #ffa502;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .server-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: rgba(20, 20, 30, 0.8);
+            border-radius: 8px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .batch-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .batch-controls input {
+            width: 80px;
+        }
+
+        @media (max-width: 768px) {
+            .admin-grid {
+                grid-template-columns: 1fr;
             }
             
-            const serverData = result.data;
-            
-            // Check kill switch
-            if (!serverData.allowAccess || serverData.maintenanceMode) {
-                return { 
-                    serverReachable: true, 
-                    allowed: false, 
-                    reason: serverData.message || 'Access temporarily disabled' 
-                };
+            .container {
+                padding: 20px;
             }
-            
-            // Check if key is revoked
-            if (serverData.revokedKeys && serverData.revokedKeys.includes(licenseKey)) {
-                return { 
-                    serverReachable: true, 
-                    allowed: false, 
-                    reason: 'License key has been revoked' 
-                };
-            }
-            
-            // Update local blacklist cache
-            await this.updateLocalBlacklist(serverData.revokedKeys || []);
-            
-            return { serverReachable: true, allowed: true, serverData };
-            
-        } catch (error) {
-            console.log('Server check error:', error.message);
-            return { serverReachable: false, allowed: true }; // Fail open
         }
-    }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Photosync Admin Interface</h1>
+            <p>Manage license keys, server status, and user access</p>
+        </div>
 
-    // Update local blacklist cache
-    async updateLocalBlacklist(revokedKeys) {
-        try {
-            const blacklistData = {
-                keys: revokedKeys,
-                lastUpdated: new Date().toISOString()
-            };
-            await fs.writeFile(this.blacklistFile, JSON.stringify(blacklistData));
-        } catch (error) {
-            console.log('Failed to update local blacklist:', error.message);
-        }
-    }
+        <div class="admin-grid">
+            <!-- Server Status Section -->
+            <div class="admin-section">
+                <h2 class="section-title">Server Status</h2>
+                <div class="server-status" id="serverStatus">
+                    <span class="status-indicator status-offline"></span>
+                    <span>Checking server status...</span>
+                </div>
+                <div class="form-group">
+                    <button class="btn" onclick="refreshServerStatus()">Refresh Status</button>
+                    <button class="btn btn-warning" onclick="toggleMaintenanceMode()">Toggle Maintenance</button>
+                    <button class="btn btn-danger" onclick="toggleKillSwitch()">Emergency Kill Switch</button>
+                </div>
+            </div>
 
-    // Check local blacklist cache
-    async checkLocalBlacklist(licenseKey) {
-        try {
-            const data = await fs.readFile(this.blacklistFile, 'utf8');
-            const blacklist = JSON.parse(data);
-            return blacklist.keys.includes(licenseKey);
-        } catch (error) {
-            return false; // No blacklist file or error reading it
-        }
-    }
+            <!-- Key Generation Section -->
+            <div class="admin-section">
+                <h2 class="section-title">Generate License Keys</h2>
+                <div class="form-group">
+                    <label for="userInfo">User Information (Optional)</label>
+                    <input type="text" id="userInfo" placeholder="e.g., Company Name - Department">
+                </div>
+                <div class="batch-controls">
+                    <label>Quantity:</label>
+                    <input type="number" id="keyQuantity" value="1" min="1" max="100">
+                    <button class="btn" onclick="generateKeys()">Generate Keys</button>
+                    <button class="btn btn-success" onclick="generateBatchKeys()">Batch Generate</button>
+                </div>
+                <div class="output-area" id="generatedKeys">Generated keys will appear here...</div>
+            </div>
 
-    // Check if user has a valid license
-    async checkLicense() {
-        try {
-            const licenseData = await fs.readFile(this.licenseFile, 'utf8');
-            const parsed = JSON.parse(licenseData);
-            
-            // Decrypt the license data
-            const algorithm = 'aes-256-cbc';
-            const key = crypto.scryptSync(this.secretKey, 'salt', 32);
-            const textParts = parsed.encrypted.split(':');
-            const iv = Buffer.from(textParts.shift(), 'hex');
-            const encryptedData = textParts.join(':');
-            const decipher = crypto.createDecipheriv(algorithm, key, iv);
-            let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
-            
-            const license = JSON.parse(decrypted);
-            
-            // Validate the stored key
-            if (!this.validateLicenseKey(license.key, license.userInfo || '')) {
-                return { valid: false, reason: 'Invalid license key' };
-            }
-            
-            // Check local blacklist first
-            if (await this.checkLocalBlacklist(license.key)) {
-                return { valid: false, reason: 'License key has been revoked' };
-            }
-            
-            // Check if we need to contact server (every 24 hours)
-            const now = Date.now();
-            const lastCheck = license.lastServerCheck || 0;
-            const shouldCheckServer = (now - lastCheck) > this.serverCheckInterval;
-            
-            if (shouldCheckServer) {
-                console.log('Checking server for license status...');
-                const serverStatus = await this.checkServerStatus(license.key);
-                
-                if (serverStatus.serverReachable) {
-                    if (!serverStatus.allowed) {
-                        return { valid: false, reason: serverStatus.reason };
-                    }
-                    
-                    // Update last server check time
-                    license.lastServerCheck = now;
-                    license.lastServerData = serverStatus.serverData;
-                    
-                    // Re-encrypt and save updated license
-                    const algorithm = 'aes-256-cbc';
-                    const key = crypto.scryptSync(this.secretKey, 'salt', 32);
-                    const iv = crypto.randomBytes(16);
-                    const cipher = crypto.createCipheriv(algorithm, key, iv);
-                    let encrypted = cipher.update(JSON.stringify(license), 'utf8', 'hex');
-                    encrypted += cipher.final('hex');
-                    encrypted = iv.toString('hex') + ':' + encrypted;
-                    
-                    await fs.writeFile(this.licenseFile, JSON.stringify({
-                        encrypted,
-                        version: '1.0'
-                    }));
-                }
-            }
-            
-            return {
-                valid: true,
-                key: license.key,
-                userInfo: license.userInfo,
-                activatedAt: license.activatedAt,
-                lastServerCheck: license.lastServerCheck,
-                serverReachable: license.lastServerData ? true : false
-            };
-            
-        } catch (error) {
-            return { valid: false, reason: 'No license found' };
-        }
-    }
+            <!-- Key Management Section -->
+            <div class="admin-section full-width">
+                <h2 class="section-title">Key Management</h2>
+                <div class="form-group">
+                    <label for="manageKey">License Key</label>
+                    <input type="text" id="manageKey" placeholder="PSYNC-2024-XXXXXX-XXXXXXXX-XXXXXXXX" maxlength="35">
+                </div>
+                <div class="form-group">
+                    <button class="btn" onclick="validateKey()">Validate Key</button>
+                    <button class="btn btn-danger" onclick="revokeKey()">Revoke Key</button>
+                    <button class="btn btn-success" onclick="restoreKey()">Restore Key</button>
+                    <button class="btn btn-warning" onclick="checkKeyStatus()">Check Status</button>
+                </div>
+                <div class="output-area" id="keyManagementOutput">Key management results will appear here...</div>
+            </div>
 
-    // Activate a license
-    async activateLicense(licenseKey, userInfo = '') {
-        try {
-            // Clean up the license key
-            const cleanKey = licenseKey.replace(/\s+/g, '').toUpperCase();
-            
-            // Validate the key format first
-            if (!this.validateLicenseKey(cleanKey, userInfo)) {
-                return { success: false, error: 'Invalid license key format' };
-            }
+            <!-- Active Keys List -->
+            <div class="admin-section full-width">
+                <h2 class="section-title">Active Keys</h2>
+                <div class="form-group">
+                    <button class="btn" onclick="loadActiveKeys()">Load Active Keys</button>
+                    <button class="btn btn-warning" onclick="exportKeys()">Export Keys</button>
+                    <button class="btn btn-danger" onclick="clearRevokedKeys()">Clear Revoked</button>
+                </div>
+                <div class="key-list" id="activeKeysList">
+                    <p>Click "Load Active Keys" to see all generated keys...</p>
+                </div>
+            </div>
+        </div>
+    </div>
 
-            // Check server status before activation
-            console.log('Checking server status during activation...');
-            const serverStatus = await this.checkServerStatus(cleanKey);
-            
-            if (serverStatus.serverReachable && !serverStatus.allowed) {
-                return { success: false, error: serverStatus.reason };
-            }
-
-            // Create license data
-            const licenseData = {
-                key: cleanKey,
-                userInfo,
-                activatedAt: new Date().toISOString(),
-                lastServerCheck: serverStatus.serverReachable ? Date.now() : 0,
-                lastServerData: serverStatus.serverData || null
-            };
-
-            // Encrypt the license data
-            const algorithm = 'aes-256-cbc';
-            const key = crypto.scryptSync(this.secretKey, 'salt', 32);
-            const iv = crypto.randomBytes(16);
-            const cipher = crypto.createCipheriv(algorithm, key, iv);
-            let encrypted = cipher.update(JSON.stringify(licenseData), 'utf8', 'hex');
-            encrypted += cipher.final('hex');
-            encrypted = iv.toString('hex') + ':' + encrypted;
-
-            // Save to file
-            await fs.writeFile(this.licenseFile, JSON.stringify({
-                encrypted,
-                version: '1.0'
-            }));
-
-            return { 
-                success: true, 
-                message: 'License activated successfully',
-                userInfo,
-                serverReachable: serverStatus.serverReachable
-            };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
-    }
-
-    // Check if license key format is valid (basic check)
-    isValidFormat(licenseKey) {
-        const pattern = /^PSYNC-2024-[A-Z0-9]{6}-[A-Z0-9]+-[A-Z0-9]{8}$/;
-        return pattern.test(licenseKey.replace(/\s+/g, '').toUpperCase());
-    }
-
-    // Format license key for display
-    formatLicenseKey(key) {
-        const clean = key.replace(/\s+/g, '').toUpperCase();
-        const parts = clean.split('-');
-        if (parts.length === 5) {
-            return `${parts[0]}-${parts[1]}-${parts[2]}-${parts[3]}-${parts[4]}`;
-        }
-        return clean;
-    }
-
-    // Get license info for display
-    async getLicenseInfo() {
-        const license = await this.checkLicense();
-        if (license.valid) {
-            const serverStatus = license.lastServerCheck ? 
-                (Date.now() - license.lastServerCheck < this.serverCheckInterval ? 'Recently verified' : 'Verification pending') :
-                'Not verified';
-                
-            return {
-                key: license.key,
-                userInfo: license.userInfo || 'Not specified',
-                activatedAt: new Date(license.activatedAt).toLocaleDateString(),
-                status: 'Active',
-                serverStatus,
-                lastServerCheck: license.lastServerCheck ? new Date(license.lastServerCheck).toLocaleDateString() : 'Never'
-            };
-        }
-        return null;
-    }
-
-    // Remove license (for testing or deactivation)
-    async removeLicense() {
-        try {
-            await fs.unlink(this.licenseFile);
-            // Also remove blacklist cache
-            try {
-                await fs.unlink(this.blacklistFile);
-            } catch (e) {
-                // Ignore if blacklist file doesn't exist
-            }
-            return true;
-        } catch (error) {
-            return false;
-        }
-    }
-
-    // Legacy method compatibility for existing code
-    async checkLicenseStatus() {
-        const result = await this.checkLicense();
-        if (result.valid) {
-            return {
-                licensed: true,
-                licenseData: {
-                    key: result.key,
-                    userInfo: result.userInfo,
-                    activatedAt: result.activatedAt
-                },
-                keyInfo: {
-                    type: 'standard',
-                    year: '2024'
-                }
-            };
-        } else {
-            return {
-                licensed: false,
-                reason: result.reason
-            };
-        }
-    }
-
-    // Legacy method compatibility for existing code
-    async saveLicenseActivation(licenseKey, userInfo = {}) {
-        const result = await this.activateLicense(licenseKey, userInfo.name || '');
-        return result.success;
-    }
-}
-
-module.exports = LicenseManager; 
+    <script src="admin.js"></script>
+</body>
+</html> 
