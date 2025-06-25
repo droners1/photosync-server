@@ -1,0 +1,12 @@
+{
+  "allowAccess": true,
+  "revokedKeys": [],
+  "message": "Service operating normally",
+  "lastUpdated": "2024-12-25T12:00:00.000Z",
+  "version": "1.0.0",
+  "maintenanceMode": false,
+  "serverInfo": {
+    "name": "Photosync License Server",
+    "contact": "javier@yourcompany.com"
+  }
+}
