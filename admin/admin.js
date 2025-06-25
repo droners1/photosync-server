@@ -2,7 +2,7 @@
 // Integrates with existing license system
 
 // Configuration - matching the existing license.js
-const SECRET_KEY = 'photosync-2024-hmac-secret-key-v1';
+const SECRET_KEY = 'photosync-2024-secret-key-v1';
 const SERVER_URL = 'https://droners1.github.io/photosync-server/photosync-status.json';
 const LOCAL_KEYS_FILE = 'generated-keys.json';
 const LOCAL_SERVER_FILE = 'photosync-status.json';
@@ -133,20 +133,17 @@ function generateUUID() {
     }
 }
 
-// Generate a single license key
+// Generate a single license key - Updated to match license.js algorithm
 async function generateLicenseKey(userInfo = '') {
-    const randomBytes = generateRandomBytes(16);
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const baseKey = `PSYNC-2024-${random}-${timestamp.toString(36).toUpperCase()}`;
     
-    // Create segments for the key
-    const segment1 = randomBytes.substring(0, 6);
-    const segment2 = randomBytes.substring(6, 14);
-    const segment3 = randomBytes.substring(14, 22);
+    // Create HMAC signature (not including userInfo for universal keys)
+    const hmac = await generateHMAC(baseKey);
+    const signature = hmac.substring(0, 8).toUpperCase();
     
-    // Format: PSYNC-2024-XXXXXX-XXXXXXXX-XXXXXXXX
-    const licenseKey = `PSYNC-2024-${segment1}-${segment2}-${segment3}`;
-    
-    // Generate HMAC for validation
-    const hmac = await generateHMAC(licenseKey);
+    const licenseKey = `${baseKey}-${signature}`;
     
     const keyData = {
         key: licenseKey,
@@ -160,33 +157,43 @@ async function generateLicenseKey(userInfo = '') {
     return keyData;
 }
 
-// Validate a license key
+// Validate a license key - Updated to match license.js validation
 async function validateLicenseKey(licenseKey) {
-    // Format validation
-    const keyPattern = /^PSYNC-2024-[A-Z0-9]{6}-[A-Z0-9]{8}-[A-Z0-9]{8}$/;
-    if (!keyPattern.test(licenseKey)) {
-        return { valid: false, reason: 'Invalid format' };
+    try {
+        const parts = licenseKey.split('-');
+        if (parts.length !== 5 || parts[0] !== 'PSYNC' || parts[1] !== '2024') {
+            return { valid: false, reason: 'Invalid format' };
+        }
+
+        const baseKey = parts.slice(0, 4).join('-');
+        const providedSignature = parts[4];
+
+        // Verify HMAC signature (not including userInfo for universal keys)
+        const expectedSignature = (await generateHMAC(baseKey)).substring(0, 8).toUpperCase();
+
+        if (providedSignature !== expectedSignature) {
+            return { valid: false, reason: 'Invalid signature' };
+        }
+
+        // Check if key exists in our generated keys
+        const keyRecord = generatedKeys.find(k => k.key === licenseKey);
+        if (!keyRecord) {
+            return { valid: false, reason: 'Key not found in database' };
+        }
+
+        // Check if key is revoked
+        if (keyRecord.status === 'revoked' || revokedKeys.includes(licenseKey)) {
+            return { valid: false, reason: 'Key has been revoked' };
+        }
+
+        return { 
+            valid: true, 
+            keyData: keyRecord,
+            hmac: expectedSignature
+        };
+    } catch (error) {
+        return { valid: false, reason: 'Validation error: ' + error.message };
     }
-    
-    // HMAC validation
-    const expectedHMAC = await generateHMAC(licenseKey);
-    
-    // Check if key exists in our generated keys
-    const keyRecord = generatedKeys.find(k => k.key === licenseKey);
-    if (!keyRecord) {
-        return { valid: false, reason: 'Key not found in database' };
-    }
-    
-    // Check if key is revoked
-    if (keyRecord.status === 'revoked' || revokedKeys.includes(licenseKey)) {
-        return { valid: false, reason: 'Key has been revoked' };
-    }
-    
-    return { 
-        valid: true, 
-        keyData: keyRecord,
-        hmac: expectedHMAC
-    };
 }
 
 // UI Functions
